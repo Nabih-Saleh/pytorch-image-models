@@ -52,9 +52,10 @@ _logger = logging.getLogger(__name__)
 class Attention(nn.Module):
     fused_attn: Final[bool]
 
+    #settings
     def __init__(
             self,
-            dim,
+            dim,                #dim: is the D-model=hidden D size= embedding D = width = input and output embeddings size
             num_heads=8,
             qkv_bias=False,
             qk_norm=False,
@@ -65,11 +66,11 @@ class Attention(nn.Module):
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.head_dim = dim // num_heads                        #head.d = d-model/#heads, so after MHA we concatenate outputs again to have the same size d-mode again to be feed to FFNN
+        self.scale = self.head_dim ** -0.5                      # dk = d.head, scale= 1/sqrt(dk)
         self.fused_attn = use_fused_attn()
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)                       #Linear transformation, input of dim dim and outputs 3 dim (one for each of q,k,v)
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
@@ -88,8 +89,8 @@ class Attention(nn.Module):
                 dropout_p=self.attn_drop.p,
             )
         else:
-            q = q * self.scale
-            attn = q @ k.transpose(-2, -1)
+            q = q * self.scale                      #do we scale before/after qxk ? does it make difference? positive or negative
+            attn = q @ k.transpose(-2, -1)          #
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
             x = attn @ v
@@ -391,7 +392,7 @@ class VisionTransformer(nn.Module):
             in_chans: int = 3,
             num_classes: int = 1000,
             global_pool: str = 'token',
-            embed_dim: int = 768,
+            embed_dim: int = 768,                           #d-model = width = hidden size D
             depth: int = 12,
             num_heads: int = 12,
             mlp_ratio: float = 4.,
@@ -464,8 +465,8 @@ class VisionTransformer(nn.Module):
         num_patches = self.patch_embed.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
-        embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens
-        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)
+        embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens             # embed_len number of patches + 1 or 0
+        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)                       # embed_len = number of patches + 1 or 0 , embed_dim = d-model (192 for ViT-Ti), size(rows: D, column: N+1)
         self.pos_drop = nn.Dropout(p=pos_drop_rate)
         if patch_drop_rate > 0:
             self.patch_drop = PatchDropout(
@@ -474,7 +475,7 @@ class VisionTransformer(nn.Module):
             )
         else:
             self.patch_drop = nn.Identity()
-        self.norm_pre = norm_layer(embed_dim) if pre_norm else nn.Identity()
+        self.norm_pre = norm_layer(embed_dim) if pre_norm else nn.Identity()                            #apply layer Normalization
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.Sequential(*[
