@@ -52,7 +52,7 @@ _logger = logging.getLogger(__name__)
 class Attention(nn.Module):
     fused_attn: Final[bool]
 
-    #settings
+    
     def __init__(
             self,
             dim,                #dim: is the D-model=hidden D size= embedding D = width = input and output embeddings size
@@ -66,7 +66,7 @@ class Attention(nn.Module):
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
-        self.head_dim = dim // num_heads                        #head.d = d-model/#heads, so after MHA we concatenate outputs again to have the same size d-mode again to be feed to FFNN
+        self.head_dim = dim // num_heads                        #head.d = d-model//#heads, so after MHA we concatenate outputs again to have the same size d-model again, to be feed to FFNN
         self.scale = self.head_dim ** -0.5                      # dk = d.head, scale= 1/sqrt(dk)
         self.fused_attn = use_fused_attn()
 
@@ -100,7 +100,7 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
         return x
 
-
+#it does scaling, but not similar to layer normalization std implementations because it lack of mean and var calc
 class LayerScale(nn.Module):
     def __init__(self, dim, init_values=1e-5, inplace=False):
         super().__init__()
@@ -110,7 +110,7 @@ class LayerScale(nn.Module):
     def forward(self, x):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
 
-
+# sounds it is an encoder block (self-attention + FFNN/MLP)
 class Block(nn.Module):
 
     def __init__(
@@ -152,8 +152,8 @@ class Block(nn.Module):
         self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
-    def forward(self, x):
-        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
+    def forward(self, x):                                               #they do layerNorm before attention
+        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))     #is this resuidual connection (X + ...) normal addition? 
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
         return x
 
@@ -191,8 +191,8 @@ class ResPostBlock(nn.Module):
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.mlp = mlp_layer(
-            in_features=dim,
-            hidden_features=int(dim * mlp_ratio),
+            in_features=dim,                                #input dim = d-model 
+            hidden_features=int(dim * mlp_ratio),           #number of neurons in the hidden layer, d-model* mlp_ratio  = 192*4 = 768    
             act_layer=act_layer,
             drop=proj_drop,
         )
@@ -385,14 +385,14 @@ class VisionTransformer(nn.Module):
         - https://arxiv.org/abs/2010.11929
     """
 
-    def __init__(
+    def __init__(                                                   #defaults for ViT-Base 
             self,
-            img_size: Union[int, Tuple[int, int]] = 224,
-            patch_size: Union[int, Tuple[int, int]] = 16,
+            img_size: Union[int, Tuple[int, int]] = 224,            #224 pixels
+            patch_size: Union[int, Tuple[int, int]] = 16,           #each patch of 16x16 pixels = 256 pixels (flattened patch)
             in_chans: int = 3,
             num_classes: int = 1000,
             global_pool: str = 'token',
-            embed_dim: int = 768,                           #d-model = width = hidden size D
+            embed_dim: int = 768,                                   #d-model = width = hidden size D
             depth: int = 12,
             num_heads: int = 12,
             mlp_ratio: float = 4.,
@@ -414,7 +414,7 @@ class VisionTransformer(nn.Module):
             norm_layer: Optional[Callable] = None,
             act_layer: Optional[Callable] = None,
             block_fn: Callable = Block,
-            mlp_layer: Callable = Mlp,
+            mlp_layer: Callable = Mlp,                          #MLP-size=MLP hidden units = mlp_ratio* emed_dim = 4* 768 = 3,072
     ):
         """
         Args:
@@ -464,9 +464,9 @@ class VisionTransformer(nn.Module):
         )
         num_patches = self.patch_embed.num_patches
 
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
-        embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens             # embed_len number of patches + 1 or 0
-        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)                       # embed_len = number of patches + 1 or 0 , embed_dim = d-model (192 for ViT-Ti), size(rows: D, column: N+1)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None            # CLS
+        embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens             # embed_len = number of patches + CLS (1 or 0)
+        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)                       # embed_len = number of patches + CLS (1 or 0) , embed_dim = d-model (192 for ViT-Ti), size(rows: D, column: N+1)
         self.pos_drop = nn.Dropout(p=pos_drop_rate)
         if patch_drop_rate > 0:
             self.patch_drop = PatchDropout(
@@ -479,7 +479,7 @@ class VisionTransformer(nn.Module):
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.Sequential(*[
-            block_fn(
+            block_fn(                                                                                   #it will inistantiate depth number of encoder block
                 dim=embed_dim,
                 num_heads=num_heads,
                 mlp_ratio=mlp_ratio,
@@ -496,7 +496,7 @@ class VisionTransformer(nn.Module):
             for i in range(depth)])
         self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
 
-        # Classifier Head
+        # Classifier Head                                                                               #is it just normal layer?
         self.fc_norm = norm_layer(embed_dim) if use_fc_norm else nn.Identity()
         self.head_drop = nn.Dropout(drop_rate)
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
