@@ -70,16 +70,16 @@ class Attention(nn.Module):
         self.scale = self.head_dim ** -0.5                      # dk = d.head, scale= 1/sqrt(dk)
         self.fused_attn = use_fused_attn()
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)                       #Linear transformation, input of dim dim and outputs 3 dim (one for each of q,k,v)
-        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)                       #Linear layer, input_dim dim and outputs 3 dim (one for each of q,k,v)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()   #layer normalization to q and k
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
+        self.proj = nn.Linear(dim, dim)                                         
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)            #??????????
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
@@ -90,12 +90,12 @@ class Attention(nn.Module):
             )
         else:
             q = q * self.scale                      #do we scale before/after qxk ? does it make difference? positive or negative
-            attn = q @ k.transpose(-2, -1)          #
-            attn = attn.softmax(dim=-1)
+            attn = q @ k.transpose(-2, -1)          
+            attn = attn.softmax(dim=-1) 
             attn = self.attn_drop(attn)
-            x = attn @ v
+            x = attn @ v                            #final operation of self-attention
 
-        x = x.transpose(1, 2).reshape(B, N, C)
+        x = x.transpose(1, 2).reshape(B, N, C)                                     #????????
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -143,7 +143,7 @@ class Block(nn.Module):
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.norm2 = norm_layer(dim)
-        self.mlp = mlp_layer(
+        self.mlp = mlp_layer(                                                   #MLP=FC FFNN
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
             act_layer=act_layer,
@@ -393,9 +393,9 @@ class VisionTransformer(nn.Module):
             num_classes: int = 1000,
             global_pool: str = 'token',
             embed_dim: int = 768,                                   #d-model = width = hidden size D
-            depth: int = 12,
+            depth: int = 12,                                        #layers = #encoder blocks
             num_heads: int = 12,
-            mlp_ratio: float = 4.,
+            mlp_ratio: float = 4.,                                  #to claculate later the number of hidden units
             qkv_bias: bool = True,
             qk_norm: bool = False,
             init_values: Optional[float] = None,
@@ -450,12 +450,12 @@ class VisionTransformer(nn.Module):
 
         self.num_classes = num_classes
         self.global_pool = global_pool
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models #NS: each pixel os one feature?
         self.num_prefix_tokens = 1 if class_token else 0
         self.no_embed_class = no_embed_class
         self.grad_checkpointing = False
 
-        self.patch_embed = embed_layer(
+        self.patch_embed = embed_layer(                 #it calls "PatchEmbed" from timm.layers, from images patches to embeddings fo patches
             img_size=img_size,
             patch_size=patch_size,
             in_chans=in_chans,
@@ -466,7 +466,7 @@ class VisionTransformer(nn.Module):
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None            # CLS
         embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens             # embed_len = number of patches + CLS (1 or 0)
-        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)                       # embed_len = number of patches + CLS (1 or 0) , embed_dim = d-model (192 for ViT-Ti), size(rows: D, column: N+1)
+        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)                       # embed_dim = d-model (192 for ViT-Ti), size(N+1, D)
         self.pos_drop = nn.Dropout(p=pos_drop_rate)
         if patch_drop_rate > 0:
             self.patch_drop = PatchDropout(
@@ -479,7 +479,7 @@ class VisionTransformer(nn.Module):
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.Sequential(*[
-            block_fn(                                                                                   #it will inistantiate depth number of encoder block
+            block_fn(                                                                                   #it will inistantiate 'depth' number of encoder block
                 dim=embed_dim,
                 num_heads=num_heads,
                 mlp_ratio=mlp_ratio,
